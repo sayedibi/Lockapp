@@ -1,0 +1,345 @@
+
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LockApp – Treningssenter Toalett</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 0; padding: 20px;
+      background: #0f172a; color: #e5e7eb;
+    }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap: wrap;}
+    h1 { font-size: 20px; margin:0; }
+    .badge { padding:4px 10px; border-radius:999px; font-size:12px; background:#1f2937; }
+    .container { display:grid; grid-template-columns: 1fr; gap:16px; margin-top:16px; }
+    @media (min-width: 880px) {
+      .container { grid-template-columns: 2fr 1fr; }
+    }
+    .card { background:#111827; border:1px solid #374151; border-radius:14px; padding:16px; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; align-items:center; }
+    .rooms { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px; }
+    .room {
+      background:#0b1220; border:1px solid #283141; border-radius:12px; padding:14px;
+      display:flex; flex-direction:column; gap:8px; position:relative; overflow:hidden;
+    }
+    .room h3 { margin:0; font-size:16px; }
+    .status { font-size:12px; padding:4px 8px; border-radius:999px; width:max-content; }
+    .available { background:#064e3b; color:#d1fae5; }
+    .occupied { background:#7c2d12; color:#ffedd5; }
+    .countdown { font-variant-numeric: tabular-nums; font-size:28px; margin-top:4px; }
+    .btn {
+      border:none; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600;
+      background:#334155; color:#e5e7eb;
+    }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn.primary { background:#2563eb; color:white; }
+    .btn.success { background:#16a34a; }
+    .btn.warn { background:#ea580c; }
+    .btn.ghost { background:transparent; border:1px solid #334155; }
+    .toolbar { display:flex; gap:8px; flex-wrap: wrap; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:12px; line-height:1.4; max-height:300px; overflow:auto; white-space:pre-wrap; }
+    .kpi { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
+    .kpi .box { background:#0b1220; border:1px solid #283141; border-radius:12px; padding:12px; }
+    .kpi .val { font-size:22px; font-variant-numeric: tabular-nums; }
+    .right .card + .card { margin-top:12px; }
+    .pill { padding:6px 10px; border-radius:999px; background:#1f2937; font-size:12px; }
+    label { font-size:12px; opacity:.85; }
+    input[type="number"], input[type="text"], input[type="password"], select {
+      background:#0b1220; color:#e5e7eb; border:1px solid #283141; border-radius:10px; padding:8px 10px;
+    }
+    .small { font-size:12px; opacity:.8; }
+    footer { margin-top:20px; opacity:.7; font-size:12px; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>LockApp – Treningssenter toalett</h1>
+    <div class="row">
+      <span class="badge" id="connection">BLE: ikke tilkoblet (simulert)</span>
+      <button class="btn ghost" id="btnScan">Skann & koble (mock)</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="left">
+      <div class="card">
+        <div class="row" style="justify-content:space-between; align-items:flex-start;">
+          <div class="row" style="gap:12px;">
+            <div class="pill">Medlemskode: <input id="memberCode" type="text" placeholder="f.eks. 12345" style="width:120px; margin-left:6px"/></div>
+            <div class="pill">Auto-timeout: <input id="autoTimeout" type="number" min="1" max="30" value="5" style="width:70px"> min</div>
+          </div>
+          <div class="row">
+            <span class="pill">Admin</span>
+            <input id="adminPin" type="password" placeholder="PIN (demo: 1234)" style="width:140px">
+            <button id="btnAdmin" class="btn">Logg inn</button>
+          </div>
+        </div>
+
+        <div class="rooms" id="rooms"></div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="card">
+        <h3>Brukslogg</h3>
+        <div id="log" class="log"></div>
+      </div>
+
+      <div class="card">
+        <h3>Statistikk (lokal – demo)</h3>
+        <div class="kpi">
+          <div class="box">
+            <div class="small">Aktive låser</div>
+            <div class="val" id="kpiActive">0</div>
+          </div>
+          <div class="box">
+            <div class="small">Pågående besøk</div>
+            <div class="val" id="kpiSessions">0</div>
+          </div>
+          <div class="box">
+            <div class="small">Total bruk i dag</div>
+            <div class="val" id="kpiUsesToday">0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Denne prototypen lagrer data i nettleserens <em>localStorage</em>. Alt er simulert – ingen ekte låser kontrolleres.
+  </footer>
+
+  <script>
+    // ---------- Mock data & storage ----------
+    const DEFAULT_ROOMS = [
+      { id: 'T1', name: 'Toalett 1' },
+      { id: 'T2', name: 'Toalett 2' },
+      { id: 'HC', name: 'HC-Toalett' },
+    ];
+
+    const state = {
+      connected: false,
+      admin: false,
+      adminPin: '1234', // demo
+      autoTimeoutMin: 5,
+      rooms: [],
+      sessions: {}, // id -> {occupied, until, member}
+      usesToday: 0,
+    };
+
+    function load() {
+      const saved = JSON.parse(localStorage.getItem('lockapp_demo_v1') || '{}');
+      state.autoTimeoutMin = saved.autoTimeoutMin ?? 5;
+      state.rooms = saved.rooms ?? DEFAULT_ROOMS;
+      state.sessions = saved.sessions ?? {};
+      state.usesToday = saved.usesToday ?? 0;
+      if (typeof state.autoTimeoutMin !== 'number') state.autoTimeoutMin = 5;
+      document.getElementById('autoTimeout').value = state.autoTimeoutMin;
+    }
+
+    function persist() {
+      localStorage.setItem('lockapp_demo_v1', JSON.stringify({
+        autoTimeoutMin: state.autoTimeoutMin,
+        rooms: state.rooms,
+        sessions: state.sessions,
+        usesToday: state.usesToday
+      }));
+    }
+
+    function log(line) {
+      const el = document.getElementById('log');
+      const ts = new Date().toLocaleTimeString();
+      el.textContent = `[${ts}] ${line}\n` + el.textContent;
+    }
+
+    // ---------- UI rendering ----------
+    function formatTimeLeft(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const mm = Math.floor(s / 60).toString().padStart(2,'0');
+      const ss = (s % 60).toString().padStart(2,'0');
+      return `${mm}:${ss}`;
+    }
+
+    function renderRooms() {
+      const wrap = document.getElementById('rooms');
+      wrap.innerHTML = '';
+      for (const room of state.rooms) {
+        const sess = state.sessions[room.id] || { occupied:false };
+        const card = document.createElement('div');
+        card.className = 'room';
+
+        const top = document.createElement('div');
+        top.className = 'row';
+        const h3 = document.createElement('h3');
+        h3.textContent = room.name;
+        const st = document.createElement('span');
+        st.className = 'status ' + (sess.occupied ? 'occupied' : 'available');
+        st.textContent = sess.occupied ? 'Opptatt' : 'Ledig';
+        top.appendChild(h3); top.appendChild(st);
+        card.appendChild(top);
+
+        const cd = document.createElement('div');
+        cd.className = 'countdown';
+        cd.id = `cd_${room.id}`;
+        cd.textContent = sess.occupied ? formatTimeLeft(sess.until - Date.now()) : '00:00';
+        card.appendChild(cd);
+
+        const tb = document.createElement('div');
+        tb.className = 'toolbar';
+
+        const btnOpen = document.createElement('button');
+        btnOpen.className = 'btn primary';
+        btnOpen.textContent = `Lås opp (${state.autoTimeoutMin} min)`;
+        btnOpen.disabled = sess.occupied;
+        btnOpen.onclick = () => handleUnlock(room.id);
+        tb.appendChild(btnOpen);
+
+        const btnExtend = document.createElement('button');
+        btnExtend.className = 'btn success';
+        btnExtend.textContent = 'Forleng +1 min';
+        btnExtend.disabled = !sess.occupied;
+        btnExtend.onclick = () => handleExtend(room.id, 1);
+        tb.appendChild(btnExtend);
+
+        const btnRelease = document.createElement('button');
+        btnRelease.className = 'btn warn';
+        btnRelease.textContent = 'Frigi nå';
+        btnRelease.disabled = !sess.occupied;
+        btnRelease.onclick = () => handleRelease(room.id, 'manual');
+        tb.appendChild(btnRelease);
+
+        if (state.admin) {
+          const btnForce = document.createElement('button');
+          btnForce.className = 'btn';
+          btnForce.textContent = 'Admin: tvangslås opp';
+          btnForce.onclick = () => handleForceOpen(room.id);
+          tb.appendChild(btnForce);
+        }
+
+        card.appendChild(tb);
+
+        const small = document.createElement('div');
+        small.className = 'small';
+        const member = sess.member ? `• Medlem: ${sess.member}` : '';
+        small.textContent = sess.occupied ? `Låst til: ${new Date(sess.until).toLocaleTimeString()} ${member}` : 'Klar for bruk';
+        card.appendChild(small);
+
+        wrap.appendChild(card);
+      }
+      updateKPIs();
+    }
+
+    function updateKPIs() {
+      const active = state.rooms.length;
+      const sessionsActive = Object.values(state.sessions).filter(s => s.occupied).length;
+      document.getElementById('kpiActive').textContent = active;
+      document.getElementById('kpiSessions').textContent = sessionsActive;
+      document.getElementById('kpiUsesToday').textContent = state.usesToday;
+    }
+
+    // ---------- Actions ----------
+    function handleUnlock(roomId) {
+      const code = (document.getElementById('memberCode').value || '').trim();
+      if (!code) {
+        alert('Skriv inn medlemskode (demo).');
+        return;
+      }
+      const until = Date.now() + state.autoTimeoutMin * 60 * 1000;
+      state.sessions[roomId] = { occupied: true, until, member: code };
+      state.usesToday += 1;
+      persist();
+      log(`🔓 ${roomId}: låst opp av ${code} i ${state.autoTimeoutMin} min`);
+      renderRooms();
+    }
+
+    function handleExtend(roomId, mins) {
+      const sess = state.sessions[roomId];
+      if (!sess?.occupied) return;
+      sess.until += mins * 60 * 1000;
+      persist();
+      log(`⏱️ ${roomId}: forlenget med ${mins} min`);
+      renderRooms();
+    }
+
+    function handleRelease(roomId, reason='auto') {
+      const sess = state.sessions[roomId];
+      if (!sess?.occupied) return;
+      state.sessions[roomId] = { occupied:false };
+      persist();
+      log(`🔒 ${roomId}: frigitt (${reason})`);
+      renderRooms();
+    }
+
+    function handleForceOpen(roomId) {
+      const until = Date.now() + 60 * 1000;
+      state.sessions[roomId] = { occupied: true, until, member: 'ADMIN' };
+      persist();
+      log(`🛠️ ${roomId}: ADMIN tvangsåpnet i 1 min`);
+      renderRooms();
+    }
+
+    // Countdown ticker
+    setInterval(() => {
+      for (const room of state.rooms) {
+        const sess = state.sessions[room.id];
+        const el = document.getElementById(`cd_${room.id}`);
+        if (!el) continue;
+        if (sess?.occupied) {
+          const left = sess.until - Date.now();
+          el.textContent = formatTimeLeft(left);
+          if (left <= 0) {
+            handleRelease(room.id, 'auto-timeout');
+          }
+        } else {
+          el.textContent = '00:00';
+        }
+      }
+    }, 500);
+
+    // ---------- BLE (simulated) ----------
+    const btnScan = document.getElementById('btnScan');
+    const conn = document.getElementById('connection');
+    btnScan.addEventListener('click', () => {
+      state.connected = !state.connected;
+      conn.textContent = state.connected ? 'BLE: tilkoblet (simulert)' : 'BLE: ikke tilkoblet (simulert)';
+      log(state.connected ? '📡 BLE: simulert tilkobling ok' : '📴 BLE: frakoblet');
+    });
+
+    // ---------- Admin & settings ----------
+    document.getElementById('btnAdmin').addEventListener('click', () => {
+      const pin = document.getElementById('adminPin').value;
+      if (state.admin) {
+        state.admin = false;
+        log('🔓 Admin logget ut');
+        document.getElementById('btnAdmin').textContent = 'Logg inn';
+        renderRooms();
+        return;
+      }
+      if (pin === state.adminPin) {
+        state.admin = true;
+        log('🔐 Admin logget inn');
+        document.getElementById('btnAdmin').textContent = 'Logg ut';
+        renderRooms();
+      } else {
+        alert('Feil PIN.');
+      }
+    });
+
+    document.getElementById('autoTimeout').addEventListener('change', (e) => {
+      const v = Math.max(1, Math.min(30, Number(e.target.value || 5)));
+      state.autoTimeoutMin = v;
+      persist();
+      renderRooms();
+    });
+
+    // Init
+    load();
+    renderRooms();
+    log('✨ Prototypen er klar. Bruk medlemskode og prøv å låse opp en enhet.');
+  </script>
+</body>
+</html>
